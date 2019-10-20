@@ -1,0 +1,87 @@
+#!/bin/groovy
+pipeline {
+    agent any
+    libraries {
+        lib('plumber-library')
+    }
+    tools {
+        maven 'maven'
+    }
+    stages {
+        stage('checkout') {
+            steps {
+                git url: 'https://github.com/mkrzyzanowski/become-a-plumber-versioned.git'
+            }
+        }
+        stage('build') {
+            stages {
+                stage('app') {
+                    steps{
+                        dir('app') {
+                            sh 'mvn clean package'
+                        }
+                    }
+                }
+                stage('docker image') {
+                    steps{
+                        dir('app') {
+                            bumpVersion file: 'VERSION'
+                            sh "docker build -t plumbers/sparktodo:${env.newVersion} ."
+                        }
+                    }
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts 'app/target/**'
+                    junit 'app/target/**/*.xml'
+                }
+            }
+        }
+        stage('deploy') {
+            stages {
+                stage('prepare') {
+                    steps {
+                        dir('app') {
+                            sh 'docker rm -f test || exit 0'
+                        }
+                    }
+                }
+                stage('deploy test') {
+                    steps {
+                        sh "docker run -d -p 9998:9999 --name 'test' plumbers/sparktodo:${env.newVersion}"
+                    }
+                }
+            }
+        }
+        stage('test api') {
+            steps {
+                dir('api-tests') {
+                    sh './gradlew clean test -Dapp.url=http://localhost:9998'
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts 'api-tests/build/reports/**'
+                    junit 'api-tests/build/test-results/**/*.xml'
+                }
+            }
+        }
+        stage('Exploratory test') {
+            input {
+                message 'Can we release the application?'
+                id 'exploratory'
+                ok 'Yep, all good.'
+            }
+            steps {
+                echo "QA said it is ok to release!"
+            }
+        }
+        stage('Release') {
+            steps {
+                sh 'docker rm -f prod || exit 0'
+                sh "docker run -d -p 9999:9999 --name 'prod' plumbers/sparktodo:${env.newVersion}"
+            }
+        }
+    }
+}
