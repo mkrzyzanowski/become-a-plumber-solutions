@@ -1,0 +1,57 @@
+#!/bin/groovy
+pipeline {
+    agent any
+    tools {
+        maven 'maven'
+    }
+    stages {
+        stage('checkout') {
+            steps {
+                git url: 'https://github.com/mkrzyzanowski/become-a-plumber.git'
+            }
+        }
+        stage('build') {
+            steps{
+                dir('app') {
+                    sh 'mvn clean package'
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts 'app/target/**'
+                    junit 'app/target/**/*.xml'
+                }
+            }
+        }
+        stage('deploy') {
+            stages {
+                stage('prepare') {
+                    steps {
+                        dir('app') {
+                            sh 'docker build -t plumbers/sparktodo:SNAPSHOT .'
+                        }
+                    }
+                }
+                stage('deploy test') {
+                    steps {
+                        sh 'docker rm -f test'
+                        sh 'docker run -d -p 9998:9999 --name "test" plumbers/sparktodo:SNAPSHOT'
+                    }
+                }
+            }
+        }
+        stage('test api') {
+            steps {
+                dir('api-tests') {
+                    sh './gradlew clean test -Dapp.url=http://localhost:9998'
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts 'api-tests/build/reports/**'
+                    junit 'api-tests/build/test-results/**/*.xml'
+                }
+            }
+        }
+    }
+}
